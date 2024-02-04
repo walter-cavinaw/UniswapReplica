@@ -3,6 +3,7 @@ pragma solidity 0.8.19;
 
 import {Ownable2Step} from "openzeppelin-contracts/contracts/access/Ownable2Step.sol";
 import {IPairFactory} from "./interfaces/IPairFactory.sol";
+import {TradingPair} from "./TradingPair.sol";
 
 /**
  * @title Factory for AMM Pairs
@@ -11,13 +12,13 @@ import {IPairFactory} from "./interfaces/IPairFactory.sol";
  * @dev Factory owner can create a new contract which uses AMM to allow trading pairs
  */
 contract PairFactory is Ownable2Step, IPairFactory {
-    struct TradingPair {
+    struct TradingPairInfo {
         address tokenA;
         address tokenB;
         address liquidityPair;
     }
 
-    mapping(address => TradingPair) _tradingPairs;
+    mapping(bytes32 => TradingPairInfo) _tradingPairs;
 
     /**
      * @notice returns the address of the AMM for the trading pair
@@ -25,13 +26,12 @@ contract PairFactory is Ownable2Step, IPairFactory {
      * @param tokenB the address of token B contract
      * @dev should throw an error if the pair is not available
      */
-    function getPair(address tokenA, address tokenB) external view returns (address pair) {
-        // TODO: order the pairs
+    function getPair(address tokenA, address tokenB) external view returns (address pairAddress) {
         (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
-        address pairHash = abi.encodePacked(token0, token1);
-        TradingPair pair = _tradingPairs[pairHash];
-        require(pair != 0, "pair should exist");
-        return pair.liquidityPair;
+        bytes32 pairHash = keccak256(abi.encodePacked(token0, token1));
+        TradingPairInfo memory pairInfo = _tradingPairs[pairHash];
+        require(pairInfo.liquidityPair != address(0), "pair should exist");
+        return pairInfo.liquidityPair;
     }
 
     /**
@@ -39,13 +39,25 @@ contract PairFactory is Ownable2Step, IPairFactory {
      * @dev creates a new AMM for the pair if it does not already exist
      */
     function createPair(address tokenA, address tokenB) external returns (address pair) {
-        // TODO: check that pair does not already exist
-
+        // check that pair does not already exist
         require(tokenA != tokenB, "tokens in pair must be different");
-        // TODO: order the token addresses
-        // TODO: create a hash of the encoding
-        // TODO: create the new contract
-        // TODO: map the hash to the new pair contract address
-        // TODO: return the pair contract address
+        // order the token addresses
+        (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
+
+        // create a hash of the encoding
+        bytes32 pairHash = keccak256(abi.encodePacked(token0, token1));
+        // ensure it doesn't already exist
+        TradingPairInfo memory pairInfo;
+        pairInfo = _tradingPairs[pairHash];
+        require(pairInfo.liquidityPair == address(0), "pair already exists");
+        // create the new contract
+        TradingPair liquidityPair = new TradingPair(token0, token1);
+        pairInfo.tokenA = token0;
+        pairInfo.tokenB = token1;
+        pairInfo.liquidityPair = address(liquidityPair);
+        // map the hash to the new pair contract address
+        _tradingPairs[pairHash] = pairInfo;
+        // return the pair contract address
+        return address(liquidityPair);
     }
 }
