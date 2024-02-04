@@ -4,6 +4,7 @@ pragma solidity 0.8.19;
 import {Ownable2Step} from "openzeppelin-contracts/contracts/access/Ownable2Step.sol";
 import {IPairFactory} from "./interfaces/IPairFactory.sol";
 import {TradingPair} from "./TradingPair.sol";
+import {ERC20} from "solady/tokens/ERC20.sol";
 
 /**
  * @title Factory for AMM Pairs
@@ -51,7 +52,9 @@ contract PairFactory is Ownable2Step, IPairFactory {
         pairInfo = _tradingPairs[pairHash];
         require(pairInfo.liquidityPair == address(0), "pair already exists");
         // create the new contract
-        TradingPair liquidityPair = new TradingPair(token0, token1);
+        string memory symbol0 = ERC20(token0).symbol();
+        string memory symbol1 = ERC20(token1).symbol();
+        TradingPair liquidityPair = new TradingPair(token0, token1, string.concat(symbol0, symbol1));
         pairInfo.tokenA = token0;
         pairInfo.tokenB = token1;
         pairInfo.liquidityPair = address(liquidityPair);
