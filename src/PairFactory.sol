@@ -38,6 +38,8 @@ contract PairFactory is Ownable2Step, IPairFactory {
 
     /**
      * @notice creates a new AMM trading pair
+     * @param tokenA the address of token A contract
+     * @param tokenB the address of token B contract
      * @dev creates a new AMM for the pair if it does not already exist
      */
     function createPair(address tokenA, address tokenB) external returns (address pair) {
