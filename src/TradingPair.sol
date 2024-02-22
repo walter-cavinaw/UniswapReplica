@@ -5,6 +5,7 @@ import {Ownable2Step} from "openzeppelin-contracts/contracts/access/Ownable2Step
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC3156FlashLender} from "openzeppelin-contracts/contracts/interfaces/IERC3156FlashLender.sol";
+import {IERC3156FlashBorrower} from "openzeppelin-contracts/contracts/interfaces/IERC3156FlashBorrower.sol";
 import {ITradingPair} from "./interfaces/ITradingPair.sol";
 import {ERC20} from "solady/tokens/ERC20.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
@@ -51,15 +52,15 @@ contract TradingPair is Ownable2Step, ITradingPair, ERC20 {
         return _name;
     }
 
-    function getToken0() public view returns (address) {
+    function getToken0() external view returns (address) {
         return address(token0);
     }
 
-    function getToken1() public view returns (address) {
+    function getToken1() external view returns (address) {
         return address(token1);
     }
 
-    function getReserves() public view returns (uint256, uint256) {
+    function getReserves() external view returns (uint256, uint256) {
         return (reserve0, reserve1);
     }
 
@@ -190,21 +191,12 @@ contract TradingPair is Ownable2Step, ITradingPair, ERC20 {
 
     function _mintFeeShareTokens() private {}
 
-    function flashFee(address token, uint256 amount) external view returns (uint256) {
-        return 0;
-    }
-
-    function maxFlashLoan(address token) external view returns (uint256) {
-        // restrict the flashLoanAmount to some percentage of the pool size
-        return 0;
-    }
-
     function flashLoan(IERC3156FlashBorrower receiver, address token, uint256 amount, bytes calldata data)
         external
         returns (bool)
     {
         require(token == address(token0) || token == address(token1), "UniswapReplica: INCORRECT_TOKEN_ADDRESS");
-        require(amount <= maxFlashLoan(token), "UniswapReplica: FLASH_LOAN_TOO_LARGE");
+        require(amount <= this.maxFlashLoan(token), "UniswapReplica: FLASH_LOAN_TOO_LARGE");
 
         // transfer tokenAmount to receiver and trigger onFlashLoan
 
@@ -222,5 +214,14 @@ contract TradingPair is Ownable2Step, ITradingPair, ERC20 {
         uint256 numerator = reserveIn * amountOut * 10_000;
         uint256 denominator = (reserveOut - amountOut) * (10_000 - TRADING_FEE_BPS);
         amountIn = (numerator / denominator) + 1;
+    }
+
+    function flashFee(address token, uint256 amount) external view returns (uint256) {
+        return 0;
+    }
+
+    function maxFlashLoan(address token) external view returns (uint256) {
+        // restrict the flashLoanAmount to some percentage of the pool size
+        return 0;
     }
 }
