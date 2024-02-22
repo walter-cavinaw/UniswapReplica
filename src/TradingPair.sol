@@ -9,6 +9,8 @@ import {IERC3156FlashBorrower} from "openzeppelin-contracts/contracts/interfaces
 import {ITradingPair} from "./interfaces/ITradingPair.sol";
 import {ERC20} from "solady/tokens/ERC20.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
+import "./utils/UQ112x112.sol";
+import "forge-std/console.sol";
 
 /**
  * @title AMM Trading Pair
@@ -17,6 +19,7 @@ import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
  */
 contract TradingPair is Ownable2Step, ITradingPair, ERC20 {
     using SafeERC20 for IERC20;
+    using UQ112x112 for uint224;
 
     IERC20 public token0;
     IERC20 public token1;
@@ -24,15 +27,17 @@ contract TradingPair is Ownable2Step, ITradingPair, ERC20 {
 
     uint256 public constant MINIMUM_LIQUIDITY = 10 ** 3;
 
-    uint256 private reserve0;
-    uint256 private reserve1;
+    uint112 private reserve0;
+    uint112 private reserve1;
     uint256 private blockTimestampLast;
 
     uint256 public price0CumulativeLast;
     uint256 public price1CumulativeLast;
     uint256 public kLast; // reserve0 * reserve1 from previous event used for fees
 
-    uint256 constant TRADING_FEE_BPS = 30;
+    uint256 public constant TRADING_FEE_BPS = 30;
+    uint256 public constant FLASH_LOAN_FEE_BPS = 10;
+    uint256 public constant FLASH_LOAN_SIZE_LIMIT_PCT = 10;
 
     event Deposit(address indexed sender, uint256 amount0, uint256 amount1, uint256 lpTokens);
     event Withdrawal(address indexed sender, uint256 amount0, uint256 amount1);
@@ -62,6 +67,10 @@ contract TradingPair is Ownable2Step, ITradingPair, ERC20 {
 
     function getReserves() external view returns (uint256, uint256) {
         return (reserve0, reserve1);
+    }
+
+    function getPriceIndices() external view returns (uint256, uint256) {
+        return (price0CumulativeLast, price1CumulativeLast);
     }
 
     function swap(uint256 amount0Out, uint256 amount1Out, uint256 swapLimit0, uint256 swapLimit1)
@@ -176,20 +185,20 @@ contract TradingPair is Ownable2Step, ITradingPair, ERC20 {
         _updateState(balance0, balance1, reserve0, reserve1);
     }
 
-    function _updateState(uint256 balance0_, uint256 balance1_, uint256 reserve0_, uint256 reserve1_) private {
+    function _updateState(uint256 balance0_, uint256 balance1_, uint112 reserve0_, uint112 reserve1_) private {
         // update the cumulative price indices
+        uint256 timeElapsed = block.timestamp - blockTimestampLast;
         if (reserve0_ > 0 && reserve1_ > 0) {
-            uint256 timeElapsed = block.timestamp - blockTimestampLast;
-            price0CumulativeLast += FixedPointMathLib.divUp(reserve0_, reserve1_) * timeElapsed;
-            price1CumulativeLast += FixedPointMathLib.divUp(reserve1_, reserve0_) * timeElapsed;
+            unchecked {
+                price0CumulativeLast += uint256(UQ112x112.encode(reserve1_).uqdiv(reserve0_)) * timeElapsed;
+                price1CumulativeLast += uint256(UQ112x112.encode(reserve0_).uqdiv(reserve1_)) * timeElapsed;
+            }
         }
         // update the reserves from the token balances
-        reserve0 = balance0_;
-        reserve1 = balance1_;
+        reserve0 = uint112(balance0_);
+        reserve1 = uint112(balance1_);
         blockTimestampLast = block.timestamp;
     }
-
-    function _mintFeeShareTokens() private {}
 
     function flashLoan(IERC3156FlashBorrower receiver, address token, uint256 amount, bytes calldata data)
         external
@@ -199,8 +208,30 @@ contract TradingPair is Ownable2Step, ITradingPair, ERC20 {
         require(amount <= this.maxFlashLoan(token), "UniswapReplica: FLASH_LOAN_TOO_LARGE");
 
         // transfer tokenAmount to receiver and trigger onFlashLoan
-
+        uint256 fee = this.flashFee(token, amount);
+        SafeERC20.safeTransfer(IERC20(token), address(receiver), amount);
+        receiver.onFlashLoan(msg.sender, token, amount, fee, data);
+        SafeERC20.safeTransferFrom(IERC20(token), address(receiver), address(this), amount + fee);
         return true;
+    }
+
+    function flashFee(address token, uint256 amount) external view returns (uint256) {
+        require(token == address(token0) || token == address(token1), "UniswapReplica: INCORRECT_TOKEN_ADDRESS");
+        if (token == address(token0)) {
+            return FLASH_LOAN_FEE_BPS * amount / 10_000;
+        } else {
+            return FLASH_LOAN_FEE_BPS * amount / 10_000;
+        }
+    }
+
+    function maxFlashLoan(address token) external view returns (uint256) {
+        // restrict the flashLoanAmount to some percentage of the pool size
+        require(token == address(token0) || token == address(token1), "UniswapReplica: INCORRECT_TOKEN_ADDRESS");
+        if (token == address(token0)) {
+            return FLASH_LOAN_SIZE_LIMIT_PCT * reserve0 / 100;
+        } else {
+            return FLASH_LOAN_SIZE_LIMIT_PCT * reserve1 / 100;
+        }
     }
 
     // given an output amount of an asset and pair reserves, returns a required input amount of the other asset
@@ -214,14 +245,5 @@ contract TradingPair is Ownable2Step, ITradingPair, ERC20 {
         uint256 numerator = reserveIn * amountOut * 10_000;
         uint256 denominator = (reserveOut - amountOut) * (10_000 - TRADING_FEE_BPS);
         amountIn = (numerator / denominator) + 1;
-    }
-
-    function flashFee(address token, uint256 amount) external view returns (uint256) {
-        return 0;
-    }
-
-    function maxFlashLoan(address token) external view returns (uint256) {
-        // restrict the flashLoanAmount to some percentage of the pool size
-        return 0;
     }
 }

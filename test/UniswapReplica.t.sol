@@ -7,6 +7,7 @@ import {PairFactory} from "../src/PairFactory.sol";
 import {TradingPair} from "../src/TradingPair.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {TestToken} from "./TestToken.sol";
+import {TestFlashBorrower} from "./FlashBorrower.sol";
 
 contract UniswapReplicaTest is Test {
     address internal alice;
@@ -17,6 +18,8 @@ contract UniswapReplicaTest is Test {
     TestToken internal tokenA;
     TestToken internal tokenB;
     TestToken internal tokenC;
+
+    event Borrowed(address initiator, address token, uint256 amount, uint256 fee);
 
     function setUp() public {
         alice = makeAddr("alice");
@@ -124,8 +127,6 @@ contract UniswapReplicaTest is Test {
 
     function testDepositInsufficientToken1() public {
         vm.startPrank(alice);
-        tokenA.approve(ABpairAddr, 1e10);
-        tokenB.approve(ABpairAddr, 1e10);
         ABpair.deposit(1e5, 1e3, 1, 1);
         vm.expectRevert("UniswapReplica: INSUFFICIENT_AMOUNT_TOKEN_1");
         uint256 liquidityTokens = ABpair.deposit(1e4, 1e4, 1e4, 1e4);
@@ -133,8 +134,6 @@ contract UniswapReplicaTest is Test {
 
     function testDepositInsufficientToken0() public {
         vm.startPrank(alice);
-        tokenA.approve(ABpairAddr, 1e10);
-        tokenB.approve(ABpairAddr, 1e10);
         ABpair.deposit(1e5, 1e3, 1, 1);
         vm.expectRevert("UniswapReplica: INSUFFICIENT_AMOUNT_TOKEN_0");
         uint256 liquidityTokens = ABpair.deposit(1e4, 1e1, 1e4, 1);
@@ -142,8 +141,6 @@ contract UniswapReplicaTest is Test {
 
     function testLPWithdrawalAmount() public {
         vm.startPrank(alice);
-        tokenA.approve(ABpairAddr, 1e10);
-        tokenB.approve(ABpairAddr, 1e10);
         uint256 liquidity = ABpair.deposit(1e5, 1e3, 1, 1);
         (uint256 amount0, uint256 amount1) = ABpair.withdraw(liquidity);
         assertGt(amount0, amount1);
@@ -151,10 +148,39 @@ contract UniswapReplicaTest is Test {
     }
 
     function testOraclePrice() public {
-        revert();
+        // deposit liquidity
+        vm.prank(alice);
+        ABpair.deposit(1e10, 1e8, 0, 0);
+        vm.warp(1 days);
+        // make a swap
+        vm.startPrank(bob);
+        tokenA.approve(ABpairAddr, 1e10);
+        tokenB.approve(ABpairAddr, 1e10);
+        ABpair.swap(0, 1e5, 2e8, 0);
+        // measure cumulative price index
+        (uint256 cumulPrice0First, uint256 cumulPrice1First) = ABpair.getPriceIndices();
+        // make a swap
+        vm.warp(2 days);
+        ABpair.swap(1e4, 0, 0, 2e4);
+        // measure price index
+        (uint256 cumulPrice0Sec, uint256 cumulPrice1Sec) = ABpair.getPriceIndices();
+        // make sure price indices are rising with swap.
+        assertGt(cumulPrice0Sec, cumulPrice0First);
+        assertGt(cumulPrice1Sec, cumulPrice1First);
     }
 
     function testFlashLoan() public {
-        revert();
+        // deposit liquidity into the pool
+        vm.prank(alice);
+        uint256 liquidity = ABpair.deposit(1e10, 1e5, 1, 1);
+        // create a flash borrower
+        TestFlashBorrower flashBorrower = new TestFlashBorrower(address(ABpair));
+        // add enough to the flashBorrower to pay for the loan fee.
+        tokenA.mint(address(flashBorrower), 1e5);
+        // trigger the flash borrower
+        // make sure it emitted borrow event on flash loan.
+        vm.expectEmit();
+        emit Borrowed(address(flashBorrower), address(tokenA), 1e8, 1e8 * ABpair.FLASH_LOAN_FEE_BPS() / 10_000);
+        flashBorrower.triggerBorrow(1e8, address(tokenA));
     }
 }

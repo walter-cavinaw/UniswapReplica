@@ -25,10 +25,11 @@ contract TestFlashBorrower is IERC3156FlashBorrower {
         external
         returns (bytes32)
     {
+        require(msg.sender == address(_tradingPair), "Lender not approved");
         // do some activity with the funds...
         emit Borrowed(initiator, token, amount, fee);
-        // now send the borrowed amount back to the lender.
-        SafeERC20.safeTransfer(IERC20(token), initiator, amount + fee);
+        // approve funds for the lender to transfer back.
+        SafeERC20.safeApprove(IERC20(token), msg.sender, amount + fee);
         return keccak256("ERC3156FlashBorrower.onFlashLoan");
     }
 }
