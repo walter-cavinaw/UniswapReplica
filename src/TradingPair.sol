@@ -119,13 +119,6 @@ contract TradingPair is ITradingPair, ERC20 {
         // check that the amount out does not go above the max token tolerance
         require(amount0In <= swapLimit0 && amount1In <= swapLimit1, "UniswapReplica: SLIPPAGE_EXCEEDED");
 
-        uint256 balance0_ = token0.balanceOf(address(this));
-        uint256 balance1_ = token1.balanceOf(address(this));
-
-        _updateState(balance0_, balance1_, reserve0, reserve1);
-
-        emit Swap(msg.sender, amount0In, amount1In, amount0Out, amount1Out);
-
         // transfer the amount in. Requires the allowance to be set. Will revert with insufficient funds.
         if (amount0In > 0) token0.safeTransferFrom(msg.sender, address(this), amount0In);
         if (amount1In > 0) token1.safeTransferFrom(msg.sender, address(this), amount1In);
@@ -133,6 +126,16 @@ contract TradingPair is ITradingPair, ERC20 {
         // transfer the amount out to the user
         if (amount0Out > 0) token0.safeTransfer(msg.sender, amount0Out);
         if (amount1Out > 0) token1.safeTransfer(msg.sender, amount1Out);
+
+        uint256 balance0_ = token0.balanceOf(address(this));
+        uint256 balance1_ = token1.balanceOf(address(this));
+
+        // check liquidity invariant
+        require(balance0_ * balance1_ >= uint256(reserve0) * uint256(reserve1), "UniswapReplica: INVALID_LIQUIDITY");
+
+        _updateState(balance0_, balance1_, reserve0, reserve1);
+
+        emit Swap(msg.sender, amount0In, amount1In, amount0Out, amount1Out);
     }
 
     /**
