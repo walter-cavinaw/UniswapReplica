@@ -17,7 +17,7 @@ import "forge-std/console.sol";
  * @author Walter Cavinaw
  * @notice An AMM for Token Pair Liquidity
  */
-contract TradingPair is Ownable2Step, ITradingPair, ERC20 {
+contract TradingPair is ITradingPair, ERC20 {
     using SafeERC20 for IERC20;
     using UQ112x112 for uint224;
 
@@ -34,6 +34,7 @@ contract TradingPair is Ownable2Step, ITradingPair, ERC20 {
     uint112 private reserve0;
     uint112 private reserve1;
     uint256 private blockTimestampLast;
+    uint private unlocked = 1;
 
     uint256 public price0CumulativeLast;
     uint256 public price1CumulativeLast;
@@ -44,8 +45,20 @@ contract TradingPair is Ownable2Step, ITradingPair, ERC20 {
     uint256 public constant FLASH_LOAN_SIZE_LIMIT_PCT = 10;
 
     event Deposit(address indexed sender, uint256 amount0, uint256 amount1, uint256 lpTokens);
-    event Withdrawal(address indexed sender, uint256 amount0, uint256 amount1);
+    event Burn(address indexed sender, uint256 amount0, uint256 amount1);
     event Swap(address indexed sender, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out);
+
+    modifier lock() {
+        require(unlocked == 1, 'UniswapReplica: LOCKED');
+        unlocked = 0;
+        _;
+        unlocked = 1;
+    }
+
+    modifier ensure(uint deadline) {
+        require(deadline >= block.timestamp, 'UniswapReplica: DEADLINE_EXCEEDED');
+        _;
+    }
 
     /**
      * @notice creates a new AMM trading pair
@@ -92,8 +105,8 @@ contract TradingPair is Ownable2Step, ITradingPair, ERC20 {
      * @param swapLimit1 The maximum amount of token1 we are willing to trade for desired token0
      * @dev Can only trade one token at a time. Limits protect user from paying more than expected.
      */
-    function swap(uint256 amount0Out, uint256 amount1Out, uint256 swapLimit0, uint256 swapLimit1)
-        external
+    function swap(uint256 amount0Out, uint256 amount1Out, uint256 swapLimit0, uint256 swapLimit1, uint deadline)
+        external ensure(deadline) lock
         returns (uint256 amount0In, uint256 amount1In)
     {
         require(amount0Out > 0 || amount1Out > 0, "UniswapReplica: INSUFFICIENT_OUTPUT_AMOUNT");
@@ -117,7 +130,7 @@ contract TradingPair is Ownable2Step, ITradingPair, ERC20 {
         if (amount0In > 0) token0.safeTransferFrom(msg.sender, address(this), amount0In);
         if (amount1In > 0) token1.safeTransferFrom(msg.sender, address(this), amount1In);
 
-        // transfer the received tokens out.
+        // transfer the amount out to the user
         if (amount0Out > 0) token0.safeTransfer(msg.sender, amount0Out);
         if (amount1Out > 0) token1.safeTransfer(msg.sender, amount1Out);
     }
@@ -134,12 +147,15 @@ contract TradingPair is Ownable2Step, ITradingPair, ERC20 {
         returns (bool)
     {
         require(token == address(token0) || token == address(token1), "UniswapReplica: INCORRECT_TOKEN_ADDRESS");
-        require(amount <= this.maxFlashLoan(token), "UniswapReplica: FLASH_LOAN_TOO_LARGE");
+        require(amount <= maxFlashLoan(token), "UniswapReplica: FLASH_LOAN_TOO_LARGE");
 
         // transfer tokenAmount to receiver and trigger onFlashLoan
-        uint256 fee = this.flashFee(token, amount);
+        uint256 fee = flashFee(token, amount);
         SafeERC20.safeTransfer(IERC20(token), address(receiver), amount);
-        receiver.onFlashLoan(msg.sender, token, amount, fee, data);
+        
+        bytes32 ret = receiver.onFlashLoan(msg.sender, token, amount, fee, data);
+        require(ret == keccak256("ERC3156FlashBorrower.onFlashLoan"), "UniswapReplica: INVALID_ON_FLASH_LOAN");
+
         SafeERC20.safeTransferFrom(IERC20(token), address(receiver), address(this), amount + fee);
         return true;
     }
@@ -150,7 +166,7 @@ contract TradingPair is Ownable2Step, ITradingPair, ERC20 {
      * @param amount hypothetical loan amount to calculate fee for.
      * @dev fee is set via BPS relative to loan size (at 10 BPS)
      */
-    function flashFee(address token, uint256 amount) external view returns (uint256) {
+    function flashFee(address token, uint256 amount) public view returns (uint256) {
         require(token == address(token0) || token == address(token1), "UniswapReplica: INCORRECT_TOKEN_ADDRESS");
         if (token == address(token0)) {
             return FLASH_LOAN_FEE_BPS * amount / 10_000;
@@ -163,7 +179,7 @@ contract TradingPair is Ownable2Step, ITradingPair, ERC20 {
      * @notice Flash loan for pool tokens
      * @param token Which token does the limit apply to.
      */
-    function maxFlashLoan(address token) external view returns (uint256) {
+    function maxFlashLoan(address token) public view returns (uint256) {
         // restrict the flashLoanAmount to some percentage of the pool size
         require(token == address(token0) || token == address(token1), "UniswapReplica: INCORRECT_TOKEN_ADDRESS");
         if (token == address(token0)) {
@@ -181,8 +197,8 @@ contract TradingPair is Ownable2Step, ITradingPair, ERC20 {
      * @param minToken1 Minimum amount of token1 to deposit. protects against unexpected changes.
      * @dev the range parameters protect the user from slippage.
      */
-    function deposit(uint256 maxToken0, uint256 maxToken1, uint256 minToken0, uint256 minToken1)
-        external
+    function deposit(uint256 maxToken0, uint256 maxToken1, uint256 minToken0, uint256 minToken1, uint deadline)
+        external ensure(deadline) lock
         returns (uint256 lpTokens)
     {
         // add checks
@@ -217,26 +233,26 @@ contract TradingPair is Ownable2Step, ITradingPair, ERC20 {
 
     /**
      * @notice Exchange pool tokens for LP tokens.
-     * @param withdrawal How many LP tokens to redeem.
+     * @param burnAmount How many LP tokens to redeem.
      * @dev returns the amount of each token we receive.
      */
-    function withdraw(uint256 withdrawal) external returns (uint256 amount0, uint256 amount1) {
-        require(withdrawal > 0, "UniswapReplica: NO_WITHDRAWAL_AMOUNT");
+    function burn(uint256 burnAmount, uint deadline) external ensure(deadline) lock returns (uint256 amount0, uint256 amount1) {
+        require(burnAmount > 0, "UniswapReplica: NO_BURN_AMOUNT");
         uint256 senderBalance = balanceOf(msg.sender);
-        require(withdrawal <= senderBalance, "UniswapReplica: INSUFFICIENT_BALANCE");
+        require(burnAmount <= senderBalance, "UniswapReplica: INSUFFICIENT_BALANCE");
         uint256 balance0 = token0.balanceOf(address(this));
         uint256 balance1 = token1.balanceOf(address(this));
 
         uint256 _totalSupply = totalSupply();
 
-        amount0 = withdrawal * balance0 / _totalSupply;
-        amount1 = withdrawal * balance1 / _totalSupply;
+        amount0 = burnAmount * balance0 / _totalSupply;
+        amount1 = burnAmount * balance1 / _totalSupply;
 
         require(amount0 > 0 && amount1 > 0, "UniswapV2: INSUFFICIENT_LIQUIDITY_BURNED");
 
-        emit Withdrawal(msg.sender, amount0, amount1);
+        emit Burn(msg.sender, amount0, amount1);
 
-        _burn(msg.sender, withdrawal);
+        _burn(msg.sender, burnAmount);
 
         token0.safeTransfer(msg.sender, amount0);
         token1.safeTransfer(msg.sender, amount1);

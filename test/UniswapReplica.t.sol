@@ -64,17 +64,17 @@ contract UniswapReplicaTest is Test {
     function testCannotSwapBoth() public {
         vm.startPrank(alice);
         vm.expectRevert("UniswapReplica: CANNOT_SWAP_BOTH");
-        ABpair.swap(2, 2, 2, 2);
+        ABpair.swap(2, 2, 2, 2, block.timestamp + 1);
     }
 
     function testSwapGivesOtherToken() public {
         vm.prank(alice);
-        ABpair.deposit(1e7, 1e5, 0, 0);
+        ABpair.deposit(1e7, 1e5, 0, 0, block.timestamp + 1 );
         uint256 bobStartBal0 = tokenA.balanceOf(bob);
         uint256 bobStartBal1 = tokenB.balanceOf(bob);
         vm.startPrank(bob);
         tokenA.approve(ABpairAddr, 1e10);
-        (uint256 token0Taken, uint256 token1Taken) = ABpair.swap(0, 1e3, 2e5, 0);
+        (uint256 token0Taken, uint256 token1Taken) = ABpair.swap(0, 1e3, 2e5, 0, block.timestamp + 1);
         vm.stopPrank();
         uint256 bobEndingBal0 = tokenA.balanceOf(bob);
         uint256 bobEndingBal1 = tokenB.balanceOf(bob);
@@ -84,19 +84,19 @@ contract UniswapReplicaTest is Test {
 
     function testSwapLimitExceeded() public {
         vm.prank(alice);
-        ABpair.deposit(1e7, 1e5, 0, 0);
+        ABpair.deposit(1e7, 1e5, 0, 0, block.timestamp+1);
         uint256 bobStartBal0 = tokenA.balanceOf(bob);
         uint256 bobStartBal1 = tokenB.balanceOf(bob);
         vm.startPrank(bob);
         tokenA.approve(ABpairAddr, 1e10);
         vm.expectRevert("UniswapReplica: SLIPPAGE_EXCEEDED");
-        ABpair.swap(0, 1e3, 1e5, 0);
+        ABpair.swap(0, 1e3, 1e5, 0, block.timestamp + 1);
         vm.stopPrank();
     }
 
     function testDepositCreatesLPToken() public {
         vm.startPrank(alice);
-        uint256 liquidityTokens = ABpair.deposit(1e5, 1e3, 1, 1);
+        uint256 liquidityTokens = ABpair.deposit(1e5, 1e3, 1, 1, block.timestamp + 1);
         assertGt(liquidityTokens, 0);
         uint256 registeredLiquidityTokens = ABpair.balanceOf(alice);
         assertEq(liquidityTokens, registeredLiquidityTokens);
@@ -107,7 +107,7 @@ contract UniswapReplicaTest is Test {
         uint256 aliceStartingBalA = tokenA.balanceOf(alice);
         uint256 aliceStartingBalB = tokenB.balanceOf(alice);
         vm.startPrank(alice);
-        uint256 liquidityTokens = ABpair.deposit(1e4, 1e3, 1, 1);
+        uint256 liquidityTokens = ABpair.deposit(1e4, 1e3, 1, 1, block.timestamp + 1);
         uint256 aliceEndingBalA = tokenA.balanceOf(alice);
         uint256 aliceEndingBalB = tokenB.balanceOf(alice);
         assertEq(aliceStartingBalA - aliceEndingBalA, 1e4);
@@ -118,31 +118,31 @@ contract UniswapReplicaTest is Test {
         vm.startPrank(alice);
         tokenA.approve(ABpairAddr, 1e10);
         tokenB.approve(ABpairAddr, 1e10);
-        ABpair.deposit(1e5, 1e3, 1, 1);
+        ABpair.deposit(1e5, 1e3, 1, 1, block.timestamp + 1);
         (uint256 reserve0, uint256 reserve1) = ABpair.getReserves();
         uint256 tokenSupply = ABpair.totalSupply();
-        uint256 liquidityTokens = ABpair.deposit(1e4, 1e4, 1, 1);
+        uint256 liquidityTokens = ABpair.deposit(1e4, 1e4, 1, 1, block.timestamp + 1);
         assertEq(liquidityTokens, 1e4 * tokenSupply / reserve0);
     }
 
     function testDepositInsufficientToken1() public {
         vm.startPrank(alice);
-        ABpair.deposit(1e5, 1e3, 1, 1);
+        ABpair.deposit(1e5, 1e3, 1, 1, block.timestamp + 1);
         vm.expectRevert("UniswapReplica: INSUFFICIENT_AMOUNT_TOKEN_1");
-        uint256 liquidityTokens = ABpair.deposit(1e4, 1e4, 1e4, 1e4);
+        uint256 liquidityTokens = ABpair.deposit(1e4, 1e4, 1e4, 1e4, block.timestamp + 1);
     }
 
     function testDepositInsufficientToken0() public {
         vm.startPrank(alice);
-        ABpair.deposit(1e5, 1e3, 1, 1);
+        ABpair.deposit(1e5, 1e3, 1, 1, block.timestamp + 1);
         vm.expectRevert("UniswapReplica: INSUFFICIENT_AMOUNT_TOKEN_0");
-        uint256 liquidityTokens = ABpair.deposit(1e4, 1e1, 1e4, 1);
+        uint256 liquidityTokens = ABpair.deposit(1e4, 1e1, 1e4, 1, block.timestamp + 1);
     }
 
-    function testLPWithdrawalAmount() public {
+    function testLPBurnAmount() public {
         vm.startPrank(alice);
-        uint256 liquidity = ABpair.deposit(1e5, 1e3, 1, 1);
-        (uint256 amount0, uint256 amount1) = ABpair.withdraw(liquidity);
+        uint256 liquidity = ABpair.deposit(1e5, 1e3, 1, 1, block.timestamp + 1);
+        (uint256 amount0, uint256 amount1) = ABpair.burn(liquidity, block.timestamp + 1);
         assertGt(amount0, amount1);
         assertEq(amount0, 90000);
     }
@@ -150,18 +150,18 @@ contract UniswapReplicaTest is Test {
     function testOraclePrice() public {
         // deposit liquidity
         vm.prank(alice);
-        ABpair.deposit(1e10, 1e8, 0, 0);
+        ABpair.deposit(1e10, 1e8, 0, 0, block.timestamp + 1);
         vm.warp(1 days);
         // make a swap
         vm.startPrank(bob);
         tokenA.approve(ABpairAddr, 1e10);
         tokenB.approve(ABpairAddr, 1e10);
-        ABpair.swap(0, 1e5, 2e8, 0);
+        ABpair.swap(0, 1e5, 2e8, 0, block.timestamp + 1);
         // measure cumulative price index
         (uint256 cumulPrice0First, uint256 cumulPrice1First) = ABpair.getPriceIndices();
         // make a swap
         vm.warp(2 days);
-        ABpair.swap(1e4, 0, 0, 2e4);
+        ABpair.swap(1e4, 0, 0, 2e4, block.timestamp + 1);
         // measure price index
         (uint256 cumulPrice0Sec, uint256 cumulPrice1Sec) = ABpair.getPriceIndices();
         // make sure price indices are rising with swap.
@@ -172,7 +172,7 @@ contract UniswapReplicaTest is Test {
     function testFlashLoan() public {
         // deposit liquidity into the pool
         vm.prank(alice);
-        uint256 liquidity = ABpair.deposit(1e10, 1e5, 1, 1);
+        uint256 liquidity = ABpair.deposit(1e10, 1e5, 1, 1, block.timestamp + 1);
         // create a flash borrower
         TestFlashBorrower flashBorrower = new TestFlashBorrower(address(ABpair));
         // add enough to the flashBorrower to pay for the loan fee.
@@ -182,5 +182,27 @@ contract UniswapReplicaTest is Test {
         vm.expectEmit();
         emit Borrowed(address(flashBorrower), address(tokenA), 1e8, 1e8 * ABpair.FLASH_LOAN_FEE_BPS() / 10_000);
         flashBorrower.triggerBorrow(1e8, address(tokenA));
+    }
+    
+    function testSwapWithPassedDeadlineFails() public {
+        // pretend to be alice and deposit liquidity
+        // make sure alice has enough tokens to deposit
+        // and approve the pair to spend them.
+        tokenA.mint(alice, 1e10);
+        tokenB.mint(alice, 1e10);
+        tokenA.mint(bob, 1e10);
+        tokenB.mint(bob, 1e10);
+
+        vm.startPrank(alice);
+        tokenA.approve(ABpairAddr, 1e10);
+        tokenB.approve(ABpairAddr, 1e10);
+        ABpair.deposit(1e10, 1e10, 0, 0, block.timestamp + 1);
+        vm.stopPrank();
+        // pretend to be bob and try to swap with a deadline that has passed.
+        vm.startPrank(bob);
+        tokenA.approve(ABpairAddr, 1e10);
+        tokenB.approve(ABpairAddr, 1e10);
+        vm.expectRevert("UniswapReplica: DEADLINE_EXCEEDED");
+        ABpair.swap(1e5, 0, 0, 1e5, block.timestamp - 1);
     }
 }
